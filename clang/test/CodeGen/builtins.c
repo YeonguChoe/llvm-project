@@ -265,6 +265,30 @@ void test_conditional_bcopy(void) {
 // CHECK-LABEL: define{{.*}} void @test_float_builtins
 void test_float_builtins(__fp16 *H, float F, double D, long double LD) {
   volatile int res;
+
+  res = __builtin_fpclassify(0, 1, 2, 3, 4, F);
+  // CHECK: %[[FPVAL:.*]] = load float, ptr %F.addr
+  // CHECK: %[[ISNAN:.*]] = call i1 @llvm.is.fpclass.f32(float %[[FPVAL]], i32 3)
+  // CHECK: br i1 %[[ISNAN]], label %fpclassify_end, label %fpclassify_not_nan
+  //
+  // CHECK: fpclassify_not_nan:
+  // CHECK: %[[ISINF:.*]] = call i1 @llvm.is.fpclass.f32(float %[[FPVAL]], i32 516)
+  // CHECK: br i1 %[[ISINF]], label %fpclassify_end, label %fpclassify_not_inf
+  //
+  // CHECK: fpclassify_not_inf:
+  // CHECK: %[[ISNORMAL:.*]] = call i1 @llvm.is.fpclass.f32(float %[[FPVAL]], i32 264)
+  // CHECK: br i1 %[[ISNORMAL]], label %fpclassify_end, label %fpclassify_not_normal
+  //
+  // CHECK: fpclassify_not_normal:
+  // CHECK: %[[ISSUBNORMAL:.*]] = call i1 @llvm.is.fpclass.f32(float %[[FPVAL]], i32 144)
+  // CHECK: br i1 %[[ISSUBNORMAL]], label %fpclassify_end, label %fpclassify_not_subnormal
+  //
+  // CHECK: fpclassify_not_subnormal:
+  // CHECK: br label %fpclassify_end
+  //
+  // CHECK: fpclassify_end:
+  // CHECK: %fpclassify_result = phi i32 [ 0, %{{.*}} ], [ 1, %fpclassify_not_nan ], [ 2, %fpclassify_not_inf ], [ 3, %fpclassify_not_normal ], [ 4, %fpclassify_not_subnormal ]
+
   res = __builtin_isinf(*H);
   // CHECK: [[TMP:%.*]] = call i1 @llvm.is.fpclass.f16(half {{.*}}, i32 516)
   // CHECK: zext i1 [[TMP]] to i32
@@ -373,7 +397,7 @@ void test_float_builtin_ops(float F, double D, long double LD, int I) {
   resld = __builtin_fabsl(LD);
   // CHECK: call float @llvm.fabs.f32(float
   // CHECK: call double @llvm.fabs.f64(double
-  // CHECK: call [[LDTYPE]] @llvm.fabs.[[LDLLVMTY]]([[LDTYPE]]
+  // CHECK: call [[LDTYPE]] @llvm.fabs.[[LDLLVMTY:[a-z0-9]+]]([[LDTYPE]]
 
   resf = __builtin_canonicalizef(F);
   resd = __builtin_canonicalize(D);
@@ -955,7 +979,7 @@ void test_builtin_bswapg(unsigned char uc, unsigned short us, unsigned int ui,
   ui = __builtin_bswapg(ui);
   // CHECK: call i32 @llvm.bswap.i32
   ul = __builtin_bswapg(ul);
-  // CHECK: call [[LONGINTTY]] @llvm.bswap.[[LONGINTTY]]
+  // CHECK: call [[LONGINTTY:[a-z0-9]+]] @llvm.bswap.[[LONGINTTY]]
   ull = __builtin_bswapg(ull);
   // CHECK: call i64 @llvm.bswap.i64
 #ifdef __SIZEOF_INT128__
