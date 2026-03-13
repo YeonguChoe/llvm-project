@@ -1,0 +1,32 @@
+// RUN: cir-opt %s -cir-to-llvm -o %t.mlir
+// RUN: FileCheck --input-file=%t.mlir %s
+
+!s32i = !cir.int<s, 32>
+!u32i = !cir.int<u, 32>
+module {
+  cir.func @test_signed() -> !s32i {
+    %0 = cir.const #cir.int<5> : !s32i
+    %1 = cir.const #cir.int<3> : !s32i
+    %2 = cir.cmp3way(%0 : !s32i, %1, #cir.cmp3way_strong_info<strong, lt = -1, eq = 0, gt = 1>) : !s32i
+    // CHECK: llvm.icmp "slt"
+    cir.return %2 : !s32i
+  }
+
+  cir.func @test_unsigned() -> !s32i {
+    %0 = cir.const #cir.int<5> : !u32i
+    %1 = cir.const #cir.int<3> : !u32i
+    %2 = cir.cmp3way(%0 : !u32i, %1, #cir.cmp3way_strong_info<strong, lt = -1, eq = 0, gt = 1>) : !s32i
+    // CHECK: llvm.icmp "ult"
+    cir.return %2 : !s32i
+  }
+
+  cir.func @test_float() -> !s32i {
+    %0 = cir.const #cir.fp<1.5> : !cir.float
+    %1 = cir.const #cir.fp<2.5> : !cir.float
+    %2 = cir.cmp3way(%0 : !cir.float, %1, #cir.cmp3way_partial_info<partial, lt = -1, eq = 0, gt = 1, unordered = 2>) : !s32i
+    // CHECK: llvm.fcmp "olt"
+    // CHECK: llvm.fcmp "oeq"
+    // CHECK: llvm.fcmp "uno"
+    cir.return %2 : !s32i
+  }
+}

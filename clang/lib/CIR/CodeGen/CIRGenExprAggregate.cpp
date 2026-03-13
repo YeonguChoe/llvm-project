@@ -301,9 +301,7 @@ public:
     cgf.cgm.errorNYI(e->getSourceRange(),
                      "AggExprEmitter: VisitSubstNonTypeTemplateParmExpr");
   }
-  void VisitConstantExpr(ConstantExpr *e) {
-    cgf.cgm.errorNYI(e->getSourceRange(), "AggExprEmitter: VisitConstantExpr");
-  }
+  void VisitConstantExpr(ConstantExpr *e) { return Visit(e->getSubExpr()); }
   void VisitMemberExpr(MemberExpr *e) { emitAggLoadOfLValue(e); }
   void VisitUnaryDeref(UnaryOperator *e) { emitAggLoadOfLValue(e); }
   void VisitStringLiteral(StringLiteral *e) { emitAggLoadOfLValue(e); }
@@ -326,7 +324,47 @@ public:
     Visit(e->getRHS());
   }
   void VisitBinCmp(const BinaryOperator *e) {
-    cgf.cgm.errorNYI(e->getSourceRange(), "AggExprEmitter: VisitBinCmp");
+    const ComparisonCategoryInfo &CompCategoryInfo =
+        cgf.getContext().CompCategories.getInfoForType(e->getType());
+
+    QualType ArgTy = e->getLHS()->getType();
+    if (ArgTy->isIntegralOrEnumerationType() || ArgTy->isRealFloatingType() ||
+        ArgTy->isNullPtrType() || ArgTy->isPointerType() ||
+        ArgTy->isMemberPointerType()) {
+      mlir::Value lhs = cgf.emitScalarExpr(e->getLHS());
+      mlir::Value rhs = cgf.emitScalarExpr(e->getRHS());
+
+      mlir::Attribute info;
+      if (CompCategoryInfo.isStrong()) {
+        info = cir::CmpThreeWayStrongInfoAttr::get(
+            cgf.getBuilder().getContext(),
+            CompCategoryInfo.getLess()->getIntValue().getSExtValue(),
+            CompCategoryInfo.getEqualOrEquiv()->getIntValue().getSExtValue(),
+            CompCategoryInfo.getGreater()->getIntValue().getSExtValue());
+      } else {
+        info = cir::CmpThreeWayPartialInfoAttr::get(
+            cgf.getBuilder().getContext(),
+            CompCategoryInfo.getLess()->getIntValue().getSExtValue(),
+            CompCategoryInfo.getEqualOrEquiv()->getIntValue().getSExtValue(),
+            CompCategoryInfo.getGreater()->getIntValue().getSExtValue(),
+            CompCategoryInfo.getUnordered()->getIntValue().getSExtValue());
+      }
+      mlir::Type resultTy = cgf.convertType(cgf.getContext().IntTy);
+      mlir::Value result = cgf.getBuilder().createThreeWayComparison(
+          cgf.getLoc(e->getSourceRange()), resultTy, lhs, rhs, info);
+
+      ensureDest(cgf.getLoc(e->getSourceRange()), e->getType());
+      LValue destLValue = cgf.makeAddrLValue(dest.getAddress(), e->getType());
+
+      const FieldDecl *field = *CompCategoryInfo.Record->field_begin();
+      LValue fieldLValue = cgf.emitLValueForFieldInitialization(
+          destLValue, field, field->getName());
+      cgf.emitStoreThroughLValue(RValue::get(result), fieldLValue, true);
+    } else {
+      cgf.cgm.errorNYI(e->getSourceRange(),
+                       "AggExprEmitter: unsupported operand type");
+      return;
+    }
   }
   void VisitCXXRewrittenBinaryOperator(CXXRewrittenBinaryOperator *e) {
     cgf.cgm.errorNYI(e->getSourceRange(),

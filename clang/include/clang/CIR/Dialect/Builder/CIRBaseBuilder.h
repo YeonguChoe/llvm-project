@@ -669,6 +669,13 @@ public:
     return cir::CmpOp::create(*this, loc, kind, lhs, rhs);
   }
 
+  cir::CmpThreeWayOp createThreeWayComparison(mlir::Location loc,
+                                              mlir::Type resultTy,
+                                              mlir::Value lhs, mlir::Value rhs,
+                                              mlir::Attribute info) {
+    return cir::CmpThreeWayOp::create(*this, loc, resultTy, lhs, rhs, info);
+  }
+
   cir::VecCmpOp createVecCompare(mlir::Location loc, cir::CmpOpKind kind,
                                  mlir::Value lhs, mlir::Value rhs) {
     VectorType vecCast = mlir::cast<VectorType>(lhs.getType());

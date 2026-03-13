@@ -3155,6 +3155,88 @@ mlir::LogicalResult CIRToLLVMCmpOpLowering::matchAndRewrite(
   return cmpOp.emitError() << "unsupported type for CmpOp: " << type;
 }
 
+mlir::LogicalResult CIRToLLVMCmpThreeWayOpLowering::matchAndRewrite(
+    cir::CmpThreeWayOp op, OpAdaptor adaptor,
+    mlir::ConversionPatternRewriter &rewriter) const {
+  mlir::Location loc = op.getLoc();
+  auto info = op.getInfo();
+  mlir::Type resultTy = getTypeConverter()->convertType(op.getType());
+  mlir::Value lhs = adaptor.getLhs();
+  mlir::Value rhs = adaptor.getRhs();
+  mlir::Type operandTy = lhs.getType();
+
+  mlir::Value ltValue, eqValue, gtValue, unorderedValue;
+  if (auto strongInfo = mlir::dyn_cast<cir::CmpThreeWayStrongInfoAttr>(info)) {
+    ltValue = mlir::LLVM::ConstantOp::create(
+        rewriter, loc, resultTy,
+        rewriter.getI64IntegerAttr(strongInfo.getLt()));
+    eqValue = mlir::LLVM::ConstantOp::create(
+        rewriter, loc, resultTy,
+        rewriter.getI64IntegerAttr(strongInfo.getEq()));
+    gtValue = mlir::LLVM::ConstantOp::create(
+        rewriter, loc, resultTy,
+        rewriter.getI64IntegerAttr(strongInfo.getGt()));
+  } else if (auto partialInfo =
+                 mlir::dyn_cast<cir::CmpThreeWayPartialInfoAttr>(info)) {
+    ltValue = mlir::LLVM::ConstantOp::create(
+        rewriter, loc, resultTy,
+        rewriter.getI64IntegerAttr(partialInfo.getLt()));
+    eqValue = mlir::LLVM::ConstantOp::create(
+        rewriter, loc, resultTy,
+        rewriter.getI64IntegerAttr(partialInfo.getEq()));
+    gtValue = mlir::LLVM::ConstantOp::create(
+        rewriter, loc, resultTy,
+        rewriter.getI64IntegerAttr(partialInfo.getGt()));
+    unorderedValue = mlir::LLVM::ConstantOp::create(
+        rewriter, loc, resultTy,
+        rewriter.getI64IntegerAttr(partialInfo.getUnordered()));
+  } else {
+    return op.emitError("unsupported comparison info attribute");
+  }
+
+  if (mlir::isa<mlir::IntegerType>(operandTy)) {
+    bool isSigned = true;
+    if (auto cirIntTy = mlir::dyn_cast<cir::IntType>(op.getLhs().getType())) {
+      isSigned = cirIntTy.isSigned();
+    }
+    auto ltPred = isSigned ? mlir::LLVM::ICmpPredicate::slt
+                           : mlir::LLVM::ICmpPredicate::ult;
+
+    mlir::Value ltCmp =
+        mlir::LLVM::ICmpOp::create(rewriter, loc, ltPred, lhs, rhs);
+    mlir::Value eqCmp = mlir::LLVM::ICmpOp::create(
+        rewriter, loc, mlir::LLVM::ICmpPredicate::eq, lhs, rhs);
+
+    mlir::Value result = mlir::LLVM::SelectOp::create(
+        rewriter, loc, ltCmp, ltValue,
+        mlir::LLVM::SelectOp::create(rewriter, loc, eqCmp, eqValue, gtValue));
+    rewriter.replaceOp(op, result);
+    return mlir::success();
+  } else if (mlir::isa<mlir::FloatType>(operandTy)) {
+    if (!unorderedValue) {
+      return op.emitError("strong ordering not supported for float operands");
+    }
+
+    mlir::Value ltCmp = mlir::LLVM::FCmpOp::create(
+        rewriter, loc, mlir::LLVM::FCmpPredicate::olt, lhs, rhs);
+    mlir::Value eqCmp = mlir::LLVM::FCmpOp::create(
+        rewriter, loc, mlir::LLVM::FCmpPredicate::oeq, lhs, rhs);
+    mlir::Value orderedResult = mlir::LLVM::SelectOp::create(
+        rewriter, loc, ltCmp, ltValue,
+        mlir::LLVM::SelectOp::create(rewriter, loc, eqCmp, eqValue, gtValue));
+
+    mlir::Value unorderedCmp = mlir::LLVM::FCmpOp::create(
+        rewriter, loc, mlir::LLVM::FCmpPredicate::uno, lhs, rhs);
+
+    mlir::Value result = mlir::LLVM::SelectOp::create(
+        rewriter, loc, unorderedCmp, unorderedValue, orderedResult);
+    rewriter.replaceOp(op, result);
+    return mlir::success();
+  } else {
+    return op.emitError("unsupported operand type for three-way comparison");
+  }
+}
+
 mlir::LogicalResult CIRToLLVMBinOpOverflowOpLowering::matchAndRewrite(
     cir::BinOpOverflowOp op, OpAdaptor adaptor,
     mlir::ConversionPatternRewriter &rewriter) const {

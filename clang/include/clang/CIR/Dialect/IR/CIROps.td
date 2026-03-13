@@ -2072,6 +2072,40 @@ def CIR_CmpOp : CIR_Op<"cmp", [Pure, SameTypeOperands]> {
 }
 
 //===----------------------------------------------------------------------===//
+// CmpThreeWayOp
+//===----------------------------------------------------------------------===//
+
+def CIR_CmpThreeWayStrongInfoAttr
+    : CIR_Attr<"CmpThreeWayStrongInfo", "cmp3way_strong_info"> {
+  let parameters = (ins "int64_t":$lt, "int64_t":$eq, "int64_t":$gt);
+  let assemblyFormat =
+      [{`<` `strong` `,` `lt` `=` $lt `,` `eq` `=` $eq `,` `gt` `=` $gt `>`}];
+}
+def CIR_CmpThreeWayPartialInfoAttr
+    : CIR_Attr<"CmpThreeWayPartialInfo", "cmp3way_partial_info"> {
+  let parameters = (ins "int64_t":$lt, "int64_t":$eq, "int64_t":$gt,
+      "int64_t":$unordered);
+  let assemblyFormat =
+      [{`<` `partial` `,` `lt` `=` $lt `,` `eq` `=` $eq `,` `gt` `=` $gt `,` `unordered` `=` $unordered `>` }];
+}
+def CIR_CmpThreeWayInfoAttr : AnyAttrOf<[CIR_CmpThreeWayStrongInfoAttr,
+                                         CIR_CmpThreeWayPartialInfoAttr]>;
+
+def CIR_CmpThreeWayOp
+    : CIR_Op<"cmp3way", [Pure, SameTypeOperands, ConditionallySpeculatable]> {
+  let summary = "Performs three-way comparison.";
+  let description = [{
+            Three-way comparison takes two operands of the same type and determines ordering.
+        }];
+  let arguments = (ins CIR_AnyType:$lhs, CIR_AnyType:$rhs,
+      CIR_CmpThreeWayInfoAttr:$info);
+  let results = (outs CIR_AnySIntType:$result);
+  let assemblyFormat = [{
+    `(` $lhs `:` type($lhs) `,` $rhs `,` qualified($info) `)` `:` type($result) attr-dict
+    }];
+}
+
+//===----------------------------------------------------------------------===//
 // BinOpOverflowOp
 //===----------------------------------------------------------------------===//
 
