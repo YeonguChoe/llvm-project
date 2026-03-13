@@ -1,14 +1,24 @@
-// RUN: cir-opt %s -cir-to-llvm -o %t.mlir
-// RUN: FileCheck --input-file=%t.mlir %s
+// RUN: cir-opt %s -cir-to-llvm -o %t.cir
+// RUN: FileCheck %s --input-file=%t.cir
 
 !s32i = !cir.int<s, 32>
 !u32i = !cir.int<u, 32>
-module {
+module attributes {cir.triple = "x86_64-unknown-linux-gnu"} {
   cir.func @test_signed() -> !s32i {
     %0 = cir.const #cir.int<5> : !s32i
     %1 = cir.const #cir.int<3> : !s32i
     %2 = cir.cmp3way(%0 : !s32i, %1, #cir.cmp3way_strong_info<strong, lt = -1, eq = 0, gt = 1>) : !s32i
-    // CHECK: llvm.icmp "slt"
+    // CHECK-LABEL: llvm.func @test_signed() -> i32
+    // CHECK: %[[VAL0:.*]] = llvm.mlir.constant(5 : i32) : i32
+    // CHECK: %[[VAL1:.*]] = llvm.mlir.constant(3 : i32) : i32
+    // CHECK: %[[LT_RESULT:.*]] = llvm.mlir.constant(-1 : i64) : i32
+    // CHECK: %[[EQ_RESULT:.*]] = llvm.mlir.constant(0 : i64) : i32
+    // CHECK: %[[GT_RESULT:.*]] = llvm.mlir.constant(1 : i64) : i32
+    // CHECK: %[[IS_LT:.*]] = llvm.icmp "slt" %[[VAL0]], %[[VAL1]] : i32
+    // CHECK: %[[IS_EQ:.*]] = llvm.icmp "eq" %[[VAL0]], %[[VAL1]] : i32
+    // CHECK: %[[EQ_OR_GT:.*]] = llvm.select %[[IS_EQ]], %[[EQ_RESULT]], %[[GT_RESULT]] : i1, i32
+    // CHECK: %[[FINAL:.*]] = llvm.select %[[IS_LT]], %[[LT_RESULT]], %[[EQ_OR_GT]] : i1, i32
+    // CHECK: llvm.return %[[FINAL]] : i32
     cir.return %2 : !s32i
   }
 
@@ -16,17 +26,59 @@ module {
     %0 = cir.const #cir.int<5> : !u32i
     %1 = cir.const #cir.int<3> : !u32i
     %2 = cir.cmp3way(%0 : !u32i, %1, #cir.cmp3way_strong_info<strong, lt = -1, eq = 0, gt = 1>) : !s32i
-    // CHECK: llvm.icmp "ult"
+    // CHECK-LABEL: llvm.func @test_unsigned() -> i32
+    // CHECK: %[[VAL0:.*]] = llvm.mlir.constant(5 : i32) : i32
+    // CHECK: %[[VAL1:.*]] = llvm.mlir.constant(3 : i32) : i32
+    // CHECK: %[[LT_RESULT:.*]] = llvm.mlir.constant(-1 : i64) : i32
+    // CHECK: %[[EQ_RESULT:.*]] = llvm.mlir.constant(0 : i64) : i32
+    // CHECK: %[[GT_RESULT:.*]] = llvm.mlir.constant(1 : i64) : i32
+    // CHECK: %[[IS_LT:.*]] = llvm.icmp "ult" %[[VAL0]], %[[VAL1]] : i32
+    // CHECK: %[[IS_EQ:.*]] = llvm.icmp "eq" %[[VAL0]], %[[VAL1]] : i32
+    // CHECK: %[[EQ_OR_GT:.*]] = llvm.select %[[IS_EQ]], %[[EQ_RESULT]], %[[GT_RESULT]] : i1, i32
+    // CHECK: %[[FINAL:.*]] = llvm.select %[[IS_LT]], %[[LT_RESULT]], %[[EQ_OR_GT]] : i1, i32
+    // CHECK: llvm.return %[[FINAL]] : i32
     cir.return %2 : !s32i
   }
 
-  cir.func @test_float() -> !s32i {
+  cir.func @test_float_non_nan() -> !s32i {
     %0 = cir.const #cir.fp<1.5> : !cir.float
     %1 = cir.const #cir.fp<2.5> : !cir.float
     %2 = cir.cmp3way(%0 : !cir.float, %1, #cir.cmp3way_partial_info<partial, lt = -1, eq = 0, gt = 1, unordered = 2>) : !s32i
-    // CHECK: llvm.fcmp "olt"
-    // CHECK: llvm.fcmp "oeq"
-    // CHECK: llvm.fcmp "uno"
+    // CHECK-LABEL: llvm.func @test_float_non_nan() -> i32
+    // CHECK: %[[VAL0:.*]] = llvm.mlir.constant(1.500000e+00 : f32) : f32
+    // CHECK: %[[VAL1:.*]] = llvm.mlir.constant(2.500000e+00 : f32) : f32
+    // CHECK: %[[LT_RESULT:.*]] = llvm.mlir.constant(-1 : i64) : i32
+    // CHECK: %[[EQ_RESULT:.*]] = llvm.mlir.constant(0 : i64) : i32
+    // CHECK: %[[GT_RESULT:.*]] = llvm.mlir.constant(1 : i64) : i32
+    // CHECK: %[[UNO_RESULT:.*]] = llvm.mlir.constant(2 : i64) : i32
+    // CHECK: %[[IS_LT:.*]] = llvm.fcmp "olt" %[[VAL0]], %[[VAL1]] : f32
+    // CHECK: %[[IS_EQ:.*]] = llvm.fcmp "oeq" %[[VAL0]], %[[VAL1]] : f32
+    // CHECK: %[[EQ_OR_GT:.*]] = llvm.select %[[IS_EQ]], %[[EQ_RESULT]], %[[GT_RESULT]] : i1, i32
+    // CHECK: %[[LT_EQ_OR_GT:.*]] = llvm.select %[[IS_LT]], %[[LT_RESULT]], %[[EQ_OR_GT]] : i1, i32
+    // CHECK: %[[IS_UNO:.*]] = llvm.fcmp "uno" %[[VAL0]], %[[VAL1]] : f32
+    // CHECK: %[[FINAL:.*]] = llvm.select %[[IS_UNO]], %[[UNO_RESULT]], %[[LT_EQ_OR_GT]] : i1, i32
+    // CHECK: llvm.return %[[FINAL]] : i32
+    cir.return %2 : !s32i
+  }
+
+  cir.func @test_float_nan() -> !s32i {
+    %0 = cir.const #cir.fp<0x7FC00000> : !cir.float
+    %1 = cir.const #cir.fp<2.5> : !cir.float
+    %2 = cir.cmp3way(%0 : !cir.float, %1, #cir.cmp3way_partial_info<partial, lt = -1, eq = 0, gt = 1, unordered = 2>) : !s32i
+    // CHECK-LABEL: llvm.func @test_float_nan() -> i32
+    // CHECK: %[[VAL0:.*]] = llvm.mlir.constant(0x7FC00000 : f32) : f32
+    // CHECK: %[[VAL1:.*]] = llvm.mlir.constant(2.500000e+00 : f32) : f32
+    // CHECK: %[[LT_RESULT:.*]] = llvm.mlir.constant(-1 : i64) : i32
+    // CHECK: %[[EQ_RESULT:.*]] = llvm.mlir.constant(0 : i64) : i32
+    // CHECK: %[[GT_RESULT:.*]] = llvm.mlir.constant(1 : i64) : i32
+    // CHECK: %[[UNO_RESULT:.*]] = llvm.mlir.constant(2 : i64) : i32
+    // CHECK: %[[IS_LT:.*]] = llvm.fcmp "olt" %[[VAL0]], %[[VAL1]] : f32
+    // CHECK: %[[IS_EQ:.*]] = llvm.fcmp "oeq" %[[VAL0]], %[[VAL1]] : f32
+    // CHECK: %[[EQ_OR_GT:.*]] = llvm.select %[[IS_EQ]], %[[EQ_RESULT]], %[[GT_RESULT]] : i1, i32
+    // CHECK: %[[LT_EQ_OR_GT:.*]] = llvm.select %[[IS_LT]], %[[LT_RESULT]], %[[EQ_OR_GT]] : i1, i32
+    // CHECK: %[[IS_UNO:.*]] = llvm.fcmp "uno" %[[VAL0]], %[[VAL1]] : f32
+    // CHECK: %[[FINAL:.*]] = llvm.select %[[IS_UNO]], %[[UNO_RESULT]], %[[LT_EQ_OR_GT]] : i1, i32
+    // CHECK: llvm.return %[[FINAL]] : i32
     cir.return %2 : !s32i
   }
 }
