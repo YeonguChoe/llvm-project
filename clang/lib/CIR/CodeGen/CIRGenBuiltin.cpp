@@ -1865,9 +1865,17 @@ RValue CIRGenFunction::emitBuiltinExpr(const GlobalDecl &gd, unsigned builtinID,
     return RValue::get(nullptr);
   }
   case Builtin::BI__scoped_atomic_thread_fence:
+    return errorBuiltinNYI(*this, e, builtinID);
   case Builtin::BI__builtin_signbit:
   case Builtin::BI__builtin_signbitf:
-  case Builtin::BI__builtin_signbitl:
+  case Builtin::BI__builtin_signbitl: {
+    CIRGenFunction::CIRGenFPOptionsRAII fPOptsRAII(*this, e);
+    mlir::Location loc = getLoc(e->getBeginLoc());
+    mlir::Value value = emitScalarExpr(e->getArg(0));
+    mlir::Type resultTy = convertType(e->getType());
+    mlir::Value signBit = emitSignBit(loc, *this, value);
+    return RValue::get(builder.createBoolToInt(signBit, resultTy));
+  }
   case Builtin::BI__warn_memset_zero_len:
   case Builtin::BI__annotation:
   case Builtin::BI__builtin_annotation:
