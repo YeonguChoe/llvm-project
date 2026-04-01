@@ -1872,9 +1872,10 @@ RValue CIRGenFunction::emitBuiltinExpr(const GlobalDecl &gd, unsigned builtinID,
     CIRGenFunction::CIRGenFPOptionsRAII fPOptsRAII(*this, e);
     mlir::Location loc = getLoc(e->getBeginLoc());
     mlir::Value value = emitScalarExpr(e->getArg(0));
-    mlir::Type resultTy = convertType(e->getType());
-    mlir::Value signBit = emitSignBit(loc, *this, value);
-    return RValue::get(builder.createBoolToInt(signBit, resultTy));
+    mlir::Operation *signBitOp = cir::SignBitOp::create(builder, loc, value);
+    mlir::Value result = builder.createBoolToInt(signBitOp->getResult(0),
+                                                 convertType(e->getType()));
+    return RValue::get(result);
   }
   case Builtin::BI__warn_memset_zero_len:
   case Builtin::BI__annotation:
