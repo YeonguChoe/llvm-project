@@ -1,5 +1,6 @@
 #include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
 #include "GISelMITest.h"
+#include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelector.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -71,4 +72,32 @@ TEST_F(AArch64GISelMITest, TestInstructionSelectErase) {
   EXPECT_EQ(ISel.NumSelected, 3);
 }
 
+class CustomISel : public InstructionSelector {
+public:
+  bool select(MachineInstr &MI) override {
+    static bool Triggered = false;
+    if (!Triggered) {
+      Triggered = true;
+      auto &MF = *MI.getMF();
+      MF.push_back(MF.CreateMachineBasicBlock());
+      MI.getParent()->addSuccessor(&MF.back());
+    }
+    return true;
+  }
+  void setupGeneratedPerFunctionState(MachineFunction &) override {}
+};
+
+TEST_F(AArch64GISelMITest, NewBlockWhileInstructionSelection) {
+  setUp(R"(
+   $x0 = COPY %2(s64)
+)");
+  if (!TM)
+    GTEST_SKIP();
+  CustomISel ISel;
+  InstructionSelect Pass;
+  Pass.setInstructionSelector(&ISel);
+  ASSERT_EQ(MF->size(), 1u);
+  Pass.selectMachineFunction(*MF);
+  EXPECT_EQ(MF->size(), 2u);
+}
 } // namespace

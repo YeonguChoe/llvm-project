@@ -10,6 +10,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SetVector.h"
@@ -179,9 +181,6 @@ bool InstructionSelect::selectMachineFunction(MachineFunction &MF) {
                          *MI);
       return false;
     }
-  // FIXME: We could introduce new blocks and will need to fix the outer loop.
-  // Until then, keep track of the number of blocks to assert that we don't.
-  const size_t NumBlocks = MF.size();
 #endif
   // Keep track of selected blocks, so we can delete unreachable ones later.
   DenseSet<MachineBasicBlock *> SelectedBlocks;
@@ -198,15 +197,46 @@ bool InstructionSelect::selectMachineFunction(MachineFunction &MF) {
     RAIIDelegateInstaller DelInstaller(MF, &AllObservers);
     ISel->AllObservers = &AllObservers;
 
-    for (MachineBasicBlock *MBB : post_order(&MF)) {
-      ISel->CurMBB = MBB;
-      SelectedBlocks.insert(MBB);
+    SmallVector<
+        std::pair<MachineBasicBlock *, MachineBasicBlock::succ_iterator>>
+        BlockSuccessorList;
+    DenseSet<MachineBasicBlock *> VisitedBlocks;
 
-      // Select instructions in reverse block order.
-      MIIMaintainer.MII = MBB->rbegin();
-      for (auto End = MBB->rend(); MIIMaintainer.MII != End;) {
+    auto AppendBlockSuccessor = [&](MachineBasicBlock *Block) {
+      if (!VisitedBlocks.contains(Block)) {
+        VisitedBlocks.insert(Block);
+        BlockSuccessorList.emplace_back(Block, Block->succ_begin());
+      }
+    };
+    AppendBlockSuccessor(&MF.front());
+
+    while (!BlockSuccessorList.empty()) {
+      MachineBasicBlock *&CurrentBlock = BlockSuccessorList.back().first;
+      MachineBasicBlock::succ_iterator &CurrentBlockSuccessorIterator =
+          BlockSuccessorList.back().second;
+
+      if (CurrentBlockSuccessorIterator != CurrentBlock->succ_end()) {
+        MachineBasicBlock *CurrentBlockSuccessor =
+            *CurrentBlockSuccessorIterator++;
+        AppendBlockSuccessor(CurrentBlockSuccessor);
+        continue;
+      }
+
+      DenseMap<Register, RegClassOrRegBank> VirtualRegisterCache;
+      for (const MachineInstr &Instruction : *CurrentBlock)
+        for (const MachineOperand &Operand : Instruction.operands())
+          if (Operand.isReg() && Operand.getReg().isVirtual())
+            VirtualRegisterCache.try_emplace(
+                Operand.getReg(), MRI.getRegClassOrRegBank(Operand.getReg()));
+
+      const size_t BlockCountBeforeSelection = MF.size();
+
+      ISel->CurMBB = CurrentBlock;
+      SelectedBlocks.insert(CurrentBlock);
+
+      MIIMaintainer.MII = CurrentBlock->rbegin();
+      for (auto End = CurrentBlock->rend(); MIIMaintainer.MII != End;) {
         MachineInstr &MI = *MIIMaintainer.MII;
-        // Increment early to skip instructions inserted by select().
         ++MIIMaintainer.MII;
 
         LLVM_DEBUG(dbgs() << "\nSelect:  " << MI);
@@ -218,6 +248,18 @@ bool InstructionSelect::selectMachineFunction(MachineFunction &MF) {
         }
         LLVM_DEBUG(MIIMaintainer.reportFullyCreatedInstrs());
       }
+
+      if (MF.size() > BlockCountBeforeSelection) {
+        for (auto &VirtualRegisterEntry : VirtualRegisterCache)
+          MRI.setRegClassOrRegBank(VirtualRegisterEntry.first,
+                                   VirtualRegisterEntry.second);
+        SelectedBlocks.erase(CurrentBlock);
+        BlockSuccessorList.pop_back();
+        VisitedBlocks.erase(CurrentBlock);
+        AppendBlockSuccessor(CurrentBlock);
+        continue;
+      }
+      BlockSuccessorList.pop_back();
     }
   }
 
@@ -289,15 +331,6 @@ bool InstructionSelect::selectMachineFunction(MachineFunction &MF) {
           "VReg's low-level type and register class have different sizes", *MI);
       return false;
     }
-  }
-
-  if (MF.size() != NumBlocks) {
-    MachineOptimizationRemarkMissed R("gisel-select", "GISelFailure",
-                                      MF.getFunction().getSubprogram(),
-                                      /*MBB=*/nullptr);
-    R << "inserting blocks is not supported yet";
-    reportGISelFailure(MF, MORE, R);
-    return false;
   }
 #endif
 
