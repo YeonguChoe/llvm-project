@@ -179,6 +179,7 @@ bool InstructionSelect::selectMachineFunction(MachineFunction &MF) {
                          *MI);
       return false;
     }
+  // NumBlocks is an invariant to ensure the number of blocks doesn't change.
   const size_t NumBlocks = MF.size();
 #endif
   // Keep track of selected blocks, so we can delete unreachable ones later.
